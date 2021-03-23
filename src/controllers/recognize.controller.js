@@ -194,6 +194,11 @@ module.exports.polling = async ({ detector, retries, id, type, url, breakMatch }
   breakMatch = !!(breakMatch === 'true' || breakMatch === true);
   const results = [];
   const matches = [];
+
+  const unmatchedFaces = [];
+  //TODO: move to constants/env var, default to false
+  const STORE_UNMATCHED_FACES = true;
+
   let attempts = 0;
   perf.start(`${detector}-${type}`);
 
@@ -211,6 +216,7 @@ module.exports.polling = async ({ detector, retries, id, type, url, breakMatch }
 
       const tmp = `/tmp/${id}-${type}-${uuidv4()}.jpg`;
       const file = `${STORAGE_PATH}/matches/${id}-${type}.jpg`;
+      const unmatchedFile = `${STORAGE_PATH}/unmatched/${id}-${type}.jpg`;
       const stream = await recognize.stream(url);
 
       if (stream) {
@@ -220,17 +226,30 @@ module.exports.polling = async ({ detector, retries, id, type, url, breakMatch }
         if (data) {
           const faces = data;
 
+          //console.log("faces:", faces)
+
           faces.forEach((face) => {
             face.attempt = i + 1;
             results.push({ ...face });
             if (face.confidence >= CONFIDENCE) {
               matches.push(face);
+            } else {
+              logger.log('no match')
+              unmatchedFaces.push(face);
             }
           });
           if (matches.length) {
             MATCH_IDS.push(id);
             await filesystem.writer(fs.createReadStream(tmp), file);
             if (breakMatch === true) break;
+          }
+          if (unmatchedFaces.length) {
+            //TODO: move to a better place, like app/server-startup
+            if (!fs.existsSync(`${STORAGE_PATH}/unmatched`)) {
+              fs.mkdirSync(`${STORAGE_PATH}/unmatched`);
+            }
+            logger.log(`${detector}: ${type} attempt ${attempts} failed, saving unmatched file.`, { verbose: true });
+            await filesystem.writer(fs.createReadStream(tmp), unmatchedFile);
           }
         }
       }
